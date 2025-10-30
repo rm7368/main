@@ -71,61 +71,95 @@ rm(expr_matrix_norm)
 # Caret stratification
 
 metadata$strata <- paste(metadata$cell_type, metadata$domain, sep = "_")
-train_idx_random <- createDataPartition(metadata$strata, p = 0.8, list = FALSE)
-train_data_random <- list(
-  expr = expr_matrix[, train_idx_random],
-  cell_type = metadata$cell_type[train_idx_random],
-  domain = metadata$domain[train_idx_random],
-  mouse = metadata$mouse[train_idx_random]
+
+# ============Enterocyte subsetting==========
+enterocyte_types <- c("enterocyte", "enterocyte.mature")
+enterocyte_mask <- metadata$cell_type %in% enterocyte_types
+print(table(metadata$cell_type))
+print(table(metadata$domain[enterocyte_mask]))
+print(table(metadata$mouse[enterocyte_mask]))
+
+# ============Enterocyte filtering=========
+
+metadata_enterocyte <- metadata[enterocyte_mask,]
+expr_matrix_enterocyte <- expr_matrix[,enterocyte_mask]
+print(table(metadata_enterocyte$cell_type))
+
+# =============One-mouse-out splits==============
+train_data_enterocyte_mouseA <- list(
+  expr = expr_matrix_enterocyte[,metadata_enterocyte$mouse == "A"],
+  cell_type = metadata_enterocyte$cell_type[metadata_enterocyte$mouse == "A"],
+  domain = metadata_enterocyte$domain[metadata_enterocyte$mouse == "A"]
 )
 
-test_data_random <- list(
-  expr = expr_matrix[,-train_idx_random],
-  cell_type = metadata$cell_type[-train_idx_random],
-  domain = metadata$domain[-train_idx_random],
-  mouse = metadata$mouse[-train_idx_random]
+test_data_enterocyte_mouseB <- list(
+  expr = expr_matrix_enterocyte[,metadata_enterocyte$mouse == "B"],
+  cell_type = metadata_enterocyte$cell_type[metadata_enterocyte$mouse == "B"],
+  domain = metadata_enterocyte$domain[metadata_enterocyte$mouse == "B"]
 )
 
-# One-mouse-out splits
-train_data_mouseA <- list(
-  expr = expr_matrix[,metadata$mouse == "A"],
-  cell_type = metadata$cell_type[metadata$mouse == "A"],
-  domain = metadata$domain[metadata$mouse == "A"]
+# =============Verify splits=============
+cat("\n===== MOUSE-BASED SPLIT =====\n")
+cat("Training cells (Mouse A):", ncol(train_data_enterocyte_mouseA$expr), "\n")
+cat("Test cells (Mouse B):", ncol(test_data_enterocyte_mouseB$expr), "\n")
+
+cat("\nTraining domain distribution (Mouse A):\n")
+print(table(train_data_enterocyte_mouseA$domain))
+
+cat("\nTest domain distribution (Mouse B):\n")
+print(table(test_data_enterocyte_mouseB$domain))
+
+cat("\nTraining enterocyte subtypes (Mouse A):\n")
+print(table(train_data_enterocyte_mouseA$cell_type))
+
+cat("\nTest enterocyte subtypes (Mouse B):\n")
+print(table(test_data_enterocyte_mouseB$cell_type))
+
+# Check class balance
+cat("\n===== CLASS BALANCE CHECK =====\n")
+cat("Training proportions:\n")
+print(prop.table(table(train_data_enterocyte_mouseA$domain)))
+cat("\nTest proportions:\n")
+print(prop.table(table(test_data_enterocyte_mouseB$domain)))
+
+# ===== SAVE R DATA =====
+
+save(train_data_enterocyte_mouseA, test_data_enterocyte_mouseB,
+     metadata_enterocyte, expr_matrix_enterocyte,
+     file = "enterocyte_domain_data_mouseAB.RData")
+
+cat("\n\nData saved to enterocyte_domain_data_mouseAB.RData\n")
+
+
+#==========Export training data=============
+write.csv(t(train_data_enterocyte_mouseA$expr),
+          "pydata/train_mouseA_expr.csv",
+          row.names = FALSE)
+train_labels <- data.frame(
+  domain = train_data_enterocyte_mouseA$domain,
+  cell_type = train_data_enterocyte_mouseA$cell_type,
+  stringsAsFactors = FALSE
 )
-
-test_data_mouseB <- list(
-  expr = expr_matrix[,metadata$mouse == "B"],
-  cell_type = metadata$cell_type[metadata$mouse == "B"],
-  domain = metadata$domain[metadata$mouse == "B"]
+write.csv(train_labels, "pydata/train_mouseA_labels.csv", row.names = FALSE)
+write.csv(t(test_data_enterocyte_mouseB$expr),
+          "pydata/test_mouseB_expr.csv",
+          row.names = FALSE)
+test_labels <- data.frame(
+  domain = test_data_enterocyte_mouseB$domain,
+  cell_type = test_data_enterocyte_mouseB$cell_type,
+  stringsAsFactors = FALSE
 )
-
-train_data_mouseB <- list(
-  expr = expr_matrix[, metadata$mouse == "B"],
-  cell_type = metadata$cell_type[metadata$mouse == "B"],
-  domain = metadata$domain[metadata$mouse == "B"]
+write.csv(test_labels, "pydata/test_mouseB_labels.csv", row.names = FALSE)
+write.csv(data.frame(gene = rownames(train_data_enterocyte_mouseA$expr)),
+          "pydata/gene_names.csv", row.names = FALSE)
+domain_mapping <- data.frame(
+  domain = c("Domain_A", "Domain_B", "Domain_C", "Domain_D", "Domain_E"),
+  label = 0:4,
+  stringsAsFactors = FALSE
 )
-
-test_data_mouseA <- list(
-  expr = expr_matrix[, metadata$mouse == "A"],
-  cell_type = metadata$cell_type[metadata$mouse == "A"],
-  domain = metadata$domain[metadata$mouse == "A"]
-)
-
-# Verify splits
-cat("Strategy A (Random split):\n")
-cat("Train:", ncol(train_data_random$expr), "cells\n")
-cat("Test:", ncol(test_data_random$expr), "cells\n")
-table(train_data_random$cell_type, train_data_random$domain)
-
-cat("\nStrategy B (Mouse A train):\n")
-cat("Train:", ncol(train_data_mouseA$expr), "cells\n")
-cat("Test:", ncol(test_data_mouseB$expr), "cells\n")
-
-# Save everything for later use
-save(train_data_random, test_data_random,
-     train_data_mouseA, test_data_mouseA,
-     train_data_mouseB, test_data_mouseB,
-     metadata, expr_matrix,
-     file = "intestinal_domain_data.RData")
-
-cat("\nData saved! Ready for modeling.\n")
+write.csv(domain_mapping, "pydata/domain_mapping.csv", row.names = FALSE)
+files <- list.files("pydata", pattern = "*.csv")
+for(f in files){
+  size_mb <- file.info(file.path("pydata",f))$size / 1024^2
+  cat(sprintf("%-40s %.2f MB\n", f, size_mb))
+}
